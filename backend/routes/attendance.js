@@ -1,270 +1,417 @@
 const express = require('express');
 const router = express.Router();
+
 const Attendance = require('../models/Attendance');
 const Class = require('../models/Class');
-const User = require('../models/User');
-const ProximityBuffer = require('../models/ProximityBuffer');
 const { protect, authorize } = require('../middleware/auth');
 
-// @route  POST /api/attendance/mark
-// Student marks their own attendance (proximity verified)
-router.post('/mark', protect, authorize('student'), async (req, res) => {
+
+/* ---------------------------
+   START ATTENDANCE SESSION
+---------------------------- */
+
+router.post('/start-session', protect, authorize('teacher'), async (req, res) => {
+
   try {
+
+    const { classId } = req.body;
+
+    const classDoc = await Class.findById(classId);
+
+    if (!classDoc) {
+      return res.status(404).json({
+        success:false,
+        message:"Class not found"
+      });
+    }
+
+    if (classDoc.teacher.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success:false,
+        message:"Not authorized"
+      });
+    }
+
+    // START SESSION
+    classDoc.attendanceActive = true;
+    classDoc.attendanceStartedAt = new Date();
+    classDoc.totalClassesHeld += 1;
+
+    await classDoc.save();
+
+    // AUTO EXPIRE SESSION AFTER 2 MINUTES
+    setTimeout(async () => {
+
+      await Class.findByIdAndUpdate(classId,{
+        attendanceActive:false
+      });
+
+      console.log("Attendance session expired");
+
+    },120000); // 2 minutes
+
+
+    res.json({
+      success:true,
+      message:"Attendance session started",
+      class:classDoc
+    });
+
+  } catch(err){
+
+    console.error(err);
+
+    res.status(500).json({
+      success:false,
+      message:err.message
+    });
+
+  }
+
+});
+
+/* ---------------------------
+   MARK ATTENDANCE
+---------------------------- */
+
+router.post('/mark', protect, authorize('student'), async (req, res) => {
+
+  try {
+
     const { classId } = req.body;
     const student = req.user;
 
-    if (!student.bluetoothDeviceId) {
-      return res.status(400).json({ success: false, message: 'No Bluetooth device registered. Please update your profile.' });
-    }
-
-    // 1. Verify proximity
-    const proximity = await ProximityBuffer.findOne({
-      bluetoothDeviceId: student.bluetoothDeviceId,
-      classId
-    });
-
-    if (!proximity) {
-      return res.status(403).json({ success: false, message: 'Not in range. Move closer to the classroom ESP32 device.' });
-    }
-
-    if (proximity.rssi < -70) {
-      return res.status(403).json({ success: false, message: 'Signal too weak. Please move closer to the classroom device.'});
-    }
-
-    const ageSeconds = (Date.now() - new Date(proximity.detectedAt).getTime()) / 1000;
-    if (ageSeconds > 120) {
-      return res.status(403).json({ success: false, message: 'Proximity expired. Ensure Bluetooth is active.' });
-    }
-
-    // 2. Check student is enrolled
     const classDoc = await Class.findById(classId);
-    if (!classDoc) return res.status(404).json({ success: false, message: 'Class not found' });
-    if (!classDoc.students.includes(student._id)) {
-      return res.status(403).json({ success: false, message: 'Not enrolled in this class' });
+
+    if (!classDoc) {
+      return res.status(404).json({
+        success: false,
+        message: 'Class not found'
+      });
     }
 
-    // 3. Check if already marked today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
+    /* Check session active */
 
-    const existing = await Attendance.findOne({
+    if (!classDoc.attendanceActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'Attendance session not active'
+      });
+    }
+
+    /* Check session expiry */
+
+    const sessionAge = (Date.now() - classDoc.attendanceStartedAt) / 60000;
+
+    if (sessionAge > 2) {
+
+      classDoc.attendanceActive = false;
+      await classDoc.save();
+
+      return res.status(400).json({
+        success: false,
+        message: 'Attendance session expired'
+      });
+
+    }
+
+    /* Check student enrolled */
+
+    const isEnrolled = classDoc.students.some(
+      id => id.toString() === student._id.toString()
+    );
+
+    if (!isEnrolled) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not enrolled in this class'
+      });
+    }
+
+    /* Today's date */
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
+
+    /* Check already marked */
+
+    const alreadyMarked = await Attendance.findOne({
       student: student._id,
       class: classId,
-      date: { $gte: today, $lt: tomorrow }
+      date: { $gte: today }
     });
 
-    if (existing) {
-      return res.status(400).json({ success: false, message: 'Attendance already marked for today' });
+    if (alreadyMarked) {
+      return res.status(400).json({
+        success: false,
+        message: 'Attendance already marked for today'
+      });
     }
 
-    // 4. Create attendance record
+    /* Create attendance */
+
     const attendance = await Attendance.create({
       student: student._id,
       class: classId,
       date: today,
       status: 'present',
-      markedBy: 'student',
-      bluetoothVerified: true,
-      rssiAtMarkTime: proximity.rssi,
-      sessionId: `${classId}_${today.toISOString().split('T')[0]}`
+      markedBy: 'student'
     });
 
-    await attendance.populate('student', 'name rollNumber');
+    await attendance.populate('student','name rollNumber');
 
-    // 5. Emit real-time to teacher's room
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`class_${classId}`).emit('attendance_marked', {
-        student: { name: student.name, rollNumber: student.rollNumber, id: student._id, department: student.department },
-        classId,
-        markedAt: attendance.markedAt,
-        bluetoothVerified: true
-      });
-    }
+    const stats = await Attendance.getAttendanceStats(student._id,classId);
 
-    // 6. Get updated stats
-    const stats = await Attendance.getAttendanceStats(student._id, classId);
+    res.status(201).json({
+      success:true,
+      message:'Attendance marked successfully',
+      attendance,
+      stats
+    });
 
-    res.status(201).json({ success: true, message: 'Attendance marked successfully!', attendance, stats });
-  } catch (err) {
-    if (err.code === 11000) {
-      return res.status(400).json({ success: false, message: 'Attendance already marked for today' });
-    }
-    res.status(500).json({ success: false, message: err.message });
+  } catch(err) {
+
+    res.status(500).json({
+      success:false,
+      message:err.message
+    });
+
   }
+
 });
 
-// @route  GET /api/attendance/my-stats
-// Student views their own attendance across all classes
+
+/* ---------------------------
+   STUDENT ATTENDANCE STATS
+---------------------------- */
+
 router.get('/my-stats', protect, authorize('student'), async (req, res) => {
+
   try {
+
     const student = req.user;
-    const classes = await Class.find({ students: student._id });
+
+    const classes = await Class.find({
+      students: student._id
+    });
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
 
     const stats = await Promise.all(
       classes.map(async (cls) => {
-        const s = await Attendance.getAttendanceStats(student._id, cls._id);
-        return { class: { id: cls._id, name: cls.name, subject: cls.subject, subjectCode: cls.subjectCode }, ...s };
-      })
-    );
 
-    const overallEligible = stats.every(s => s.eligible);
-    res.json({ success: true, stats, overallEligible });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
+        const s = await Attendance.getAttendanceStats(
+          student._id,
+          cls._id
+        );
 
-// @route  GET /api/attendance/class/:classId
-// Teacher views all attendance for a class
-router.get('/class/:classId', protect, authorize('teacher'), async (req, res) => {
-  try {
-    const { classId } = req.params;
-    const { date } = req.query;
+        const todayAttendance = await Attendance.findOne({
+          student: student._id,
+          class: cls._id,
+          date: { $gte: today }
+        });
 
-    const classDoc = await Class.findById(classId).populate('students', 'name rollNumber email department');
-    if (!classDoc) return res.status(404).json({ success: false, message: 'Class not found' });
-
-    let query = { class: classId };
-    if (date) {
-      const d = new Date(date);
-      d.setHours(0, 0, 0, 0);
-      const next = new Date(d);
-      next.setDate(d.getDate() + 1);
-      query.date = { $gte: d, $lt: next };
-    }
-
-    const records = await Attendance.find(query)
-      .populate('student', 'name rollNumber email department')
-      .sort({ markedAt: -1 });
-
-    // Compute per-student stats
-    const studentStats = await Promise.all(
-      classDoc.students.map(async (stu) => {
-        const s = await Attendance.getAttendanceStats(stu._id, classId);
-        const todayRecord = records.find(r => r.student?._id?.toString() === stu._id.toString());
         return {
-          student: stu,
-          ...s,
-          todayStatus: todayRecord?.status || 'absent',
-          markedAt: todayRecord?.markedAt
+          class: {
+            id: cls._id,
+            name: cls.name,
+            subject: cls.subject,
+            subjectCode: cls.subjectCode
+          },
+          todayStatus: todayAttendance ? todayAttendance.status : null,
+          ...s
         };
+
       })
     );
 
     res.json({
       success: true,
-      class: classDoc,
-      records,
-      studentStats,
-      belowThreshold: studentStats.filter(s => !s.eligible)
+      stats
     });
+
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
   }
+
 });
 
-// @route  POST /api/attendance/manual-override
-// Teacher manually marks a student present
-router.post('/manual-override', protect, authorize('teacher'), async (req, res) => {
-  try {
-    const { studentId, classId, date, status } = req.body;
 
-    const today = date ? new Date(date) : new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
+/* ---------------------------
+   ELIGIBILITY REPORT
+---------------------------- */
 
-    const attendance = await Attendance.findOneAndUpdate(
-      { student: studentId, class: classId, date: { $gte: today, $lt: tomorrow } },
-      {
-        student: studentId,
-        class: classId,
-        date: today,
-        status: status || 'manual_override',
-        markedBy: 'teacher',
-        bluetoothVerified: false,
-        markedAt: new Date()
-      },
-      { upsert: true, new: true }
-    );
+router.get('/eligibility/:classId', protect, authorize('teacher'), async (req,res)=>{
 
-    await attendance.populate('student', 'name rollNumber');
+  try{
 
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`class_${classId}`).emit('attendance_marked', {
-        student: { name: attendance.student.name, rollNumber: attendance.student.rollNumber, id: attendance.student._id, department: attendance.student.department },
-        classId,
-        markedAt: attendance.markedAt,
-        bluetoothVerified: false,
-        manualOverride: true
+    const { classId } = req.params;
+
+    const classDoc = await Class.findById(classId)
+.populate('students', 'name rollNumber email');
+
+if (classDoc.attendanceActive && classDoc.attendanceStartedAt) {
+
+  const sessionAge = (Date.now() - classDoc.attendanceStartedAt) / 60000;
+
+  if (sessionAge > 2) {
+    classDoc.attendanceActive = false;
+    await classDoc.save();
+  }
+
+}
+    if(!classDoc){
+      return res.status(404).json({
+        success:false,
+        message:'Class not found'
       });
     }
 
-    res.json({ success: true, message: 'Manual override applied', attendance });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
+    const report = [];
 
-// @route  POST /api/attendance/start-session
-// Teacher starts a class session (increments totalClassesHeld)
-router.post('/start-session', protect, authorize('teacher'), async (req, res) => {
-  try {
-    const { classId } = req.body;
-    const classDoc = await Class.findByIdAndUpdate(
-      classId,
-      { $inc: { totalClassesHeld: 1 } },
-      { new: true }
-    );
-    if (!classDoc) return res.status(404).json({ success: false, message: 'Class not found' });
+    for(const student of classDoc.students){
 
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`class_${classId}`).emit('session_started', {
-        classId,
-        totalClassesHeld: classDoc.totalClassesHeld,
-        startedAt: new Date()
+      const stats = await Attendance.getAttendanceStats(student._id,classId);
+
+      report.push({
+        student,
+        ...stats
       });
+
     }
 
-    res.json({ success: true, message: 'Session started', totalClassesHeld: classDoc.totalClassesHeld });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// @route  GET /api/attendance/eligibility/:classId
-// Get eligibility report for a class
-router.get('/eligibility/:classId', protect, authorize('teacher'), async (req, res) => {
-  try {
-    const classDoc = await Class.findById(req.params.classId).populate('students', 'name rollNumber email department semester');
-    if (!classDoc) return res.status(404).json({ success: false, message: 'Class not found' });
-
-    const report = await Promise.all(
-      classDoc.students.map(async (stu) => {
-        const s = await Attendance.getAttendanceStats(stu._id, classDoc._id);
-        return { student: stu, ...s };
-      })
-    );
-
-    const eligible = report.filter(r => r.eligible);
-    const ineligible = report.filter(r => !r.eligible);
+    const eligible = report.filter(r => r.percentage >= 75);
+    const ineligible = report.filter(r => r.percentage < 75);
 
     res.json({
-      success: true,
-      class: { name: classDoc.name, subject: classDoc.subject, totalClassesHeld: classDoc.totalClassesHeld },
-      report,
+      success:true,
       eligible,
-      ineligible,
-      summary: { total: report.length, eligible: eligible.length, ineligible: ineligible.length }
+      ineligible
     });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+
+  }catch(err){
+
+    res.status(500).json({
+      success:false,
+      message:err.message
+    });
+
   }
+
 });
+
+
+/* ---------------------------
+   TEACHER VIEW CLASS ATTENDANCE
+---------------------------- */
+
+router.get('/class/:classId', protect, authorize('teacher'), async (req, res) => {
+
+  try {
+
+    const { classId } = req.params;
+
+    const classDoc = await Class.findById(classId)
+      .populate('students', 'name rollNumber email');
+
+    if (!classDoc) {
+      return res.status(404).json({
+        success:false,
+        message:'Class not found'
+      });
+    }
+
+    if (classDoc.teacher.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success:false,
+        message:'Not authorized'
+      });
+    }
+
+    const records = await Attendance.find({
+      class: classId
+    }).populate('student','name rollNumber email');
+
+    res.json({
+      success:true,
+      class: classDoc,
+      records
+    });
+
+  } catch (err) {
+
+    res.status(500).json({
+      success:false,
+      message: err.message
+    });
+
+  }
+
+});
+
+
+/* ---------------------------
+   MANUAL ATTENDANCE OVERRIDE
+---------------------------- */
+
+router.post('/manual-override', protect, authorize('teacher'), async (req, res) => {
+
+  try {
+
+    const { studentId, classId, status } = req.body;
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
+
+    const existing = await Attendance.findOne({
+      student: studentId,
+      class: classId,
+      date: { $gte: today }
+    });
+
+    if (existing) {
+
+      existing.status = status || 'manual_override';
+      existing.markedBy = 'teacher';
+
+      await existing.save();
+
+      return res.json({
+        success:true,
+        attendance: existing
+      });
+
+    }
+
+    const attendance = await Attendance.create({
+      student: studentId,
+      class: classId,
+      date: today,
+      status: status || 'manual_override',
+      markedBy: 'teacher'
+    });
+
+    res.json({
+      success:true,
+      attendance
+    });
+
+  } catch (err) {
+
+    res.status(500).json({
+      success:false,
+      message: err.message
+    });
+
+  }
+
+});
+
 
 module.exports = router;
