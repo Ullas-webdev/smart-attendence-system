@@ -123,11 +123,9 @@ router.get('/', protect, async (req, res) => {
 
     if (req.user.role === 'teacher') {
 
-      /* Teacher sees their classes */
+      /* Demo Mode: All Teachers see all classes */
 
-      classes = await Class.find({
-        teacher: req.user._id
-      })
+      classes = await Class.find({})
       .populate('students', 'name rollNumber email department')
       .populate('teacher', 'name email');
 
@@ -246,6 +244,9 @@ router.get('/:id', protect, async (req, res) => {
     }
 
 
+    // Demo Mode: Any teacher can view any class details
+
+    /*
     if (
       req.user.role === "teacher" &&
       cls.teacher._id.toString() !== req.user._id.toString()
@@ -255,6 +256,7 @@ router.get('/:id', protect, async (req, res) => {
         message: "Not authorized"
       });
     }
+    */
 
 
     res.json({
@@ -297,12 +299,16 @@ router.get('/:id/students', protect, authorize('teacher'), async (req, res) => {
     }
 
 
+    // Demo Mode: Any teacher can view any class students
+    
+    /*
     if (cls.teacher.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
         message: "Not authorized"
       });
     }
+    */
 
 
     res.json({

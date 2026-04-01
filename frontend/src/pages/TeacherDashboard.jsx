@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, CheckCircle, AlertTriangle, BookOpen, Play, Edit3, Bluetooth } from 'lucide-react';
+import { Users, CheckCircle, AlertTriangle, BookOpen, Play, Edit3, Bluetooth, Download } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import { AttendanceCircle, StatCard } from '../components/AttendanceStats';
 import { useAuth } from '../context/AuthContext';
@@ -72,18 +72,29 @@ const enrolledStudents = stdRes.data.students || [];
 
 const stats = attendance.records || [];
 
+const today = new Date();
+today.setHours(0,0,0,0);
+
 const studentStats = enrolledStudents.map(student=>{
 
-const record = stats.find(
+const studentRecords = stats.filter(
 r => r.student._id === student._id
 );
 
+const todayRecord = studentRecords.find(
+r => new Date(r.date) >= today
+);
+
+const present = studentRecords.length;
+const total = attendance.class?.totalClassesHeld || 0;
+const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
+
 return{
 student,
-present: record ? 1 : 0,
-total: attendance.class?.totalClassesHeld || 0,
-percentage: record ? 100 : 0,
-todayStatus: record ? 'present' : 'absent'
+present,
+total,
+percentage,
+todayStatus: todayRecord ? todayRecord.status : 'absent'
 };
 
 });
@@ -229,7 +240,46 @@ eligibilityReport?.ineligible?.length || 0;
 
 
 
+// --- CSV DOWNLOAD LOGIC ---
+
+const downloadCSV = () => {
+  if (!selectedClass || filteredStudentStats.length === 0) {
+    toast.error("No data to download");
+    return;
+  }
+
+  // Define headers
+  const headers = ["Student Name", "Roll Number", "Total Present", "Total Classes Held", "Percentage", "Today's Status"];
+  
+  // Format data
+  const rows = filteredStudentStats.map(s => [
+    s.student.name,
+    s.student.rollNumber,
+    s.present,
+    s.total,
+    `${s.percentage}%`,
+    s.todayStatus === 'present' ? 'Present' : 'Absent'
+  ]);
+
+  // Create CSV string
+  const csvContent = [
+    headers.join(","),
+    ...rows.map(r => r.map(x => `"${x}"`).join(",")) // Escaping commas in values
+  ].join("\n");
+
+  // Create Blob and trigger download
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `${selectedClass.subject}_Attendance_Report.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
 return(
+
 
 <div className="min-h-screen bg-gray-50">
 
@@ -256,6 +306,17 @@ Welcome, {user?.name}
 
 {selectedClass && (
 
+<div className="flex gap-2 items-center">
+
+<button
+type="button"
+onClick={downloadCSV}
+className="flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm bg-gray-100 hover:bg-gray-200 text-gray-700"
+>
+<Download className="w-4 h-4"/>
+Download Report
+</button>
+
 <button
 type="button"
 onClick={handleStartSession}
@@ -274,6 +335,8 @@ selectedClass?.attendanceActive
 : 'Start Session'}
 
 </button>
+
+</div>
 
 )}
 
@@ -429,7 +492,10 @@ Loading...
 </td>
 
 <td className="py-3 pr-4">
+<div className="flex items-center gap-2">
 <AttendanceCircle percentage={s.percentage}/>
+<span className="text-xs text-gray-500 font-medium">{s.present}/{s.total}</span>
+</div>
 </td>
 
 <td>

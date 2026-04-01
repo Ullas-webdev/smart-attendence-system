@@ -25,12 +25,15 @@ router.post('/start-session', protect, authorize('teacher'), async (req, res) =>
       });
     }
 
+    // Demo Mode: Any teacher can start session
+    /*
     if (classDoc.teacher.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success:false,
         message:"Not authorized"
       });
     }
+    */
 
     // START SESSION
     classDoc.attendanceActive = true;
@@ -327,12 +330,15 @@ router.get('/class/:classId', protect, authorize('teacher'), async (req, res) =>
       });
     }
 
+    // Demo Mode: Any teacher can view attendance
+    /*
     if (classDoc.teacher.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success:false,
         message:'Not authorized'
       });
     }
+    */
 
     const records = await Attendance.find({
       class: classId
