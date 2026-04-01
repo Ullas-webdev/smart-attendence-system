@@ -13,13 +13,13 @@ async function seed() {
 
   /* ------------------ CREATE TEACHER ------------------ */
 
-  let teacher = await User.findOne({ email: 'teacher@demo.com' });
+  let teacher = await User.findOne({ email: 'admin@university.edu' });
 
   if (!teacher) {
 
     teacher = await User.create({
-      name: 'Dr. Rajesh Kumar',
-      email: 'teacher@demo.com',
+      name: 'Admin Professor',
+      email: 'admin@university.edu',
       password: 'password123',
       role: 'teacher',
       department: 'CS IoT'

@@ -54,55 +54,6 @@ export default function Login() {
 
   };
 
-
-
-  const demoCredentials = {
-    teacher:{ email:'teacher@demo.com', password:'password123' },
-    student:{ email:'arjun@demo.com', password:'password123' }
-  };
-
-
-  const handleDemoLogin = async(role)=>{
-
-    const creds = demoCredentials[role] || demoCredentials.student;
-
-    setLoading(true);
-
-    try{
-
-      const res = await login(creds);
-
-      const token = res.data.token;
-      const user = res.data.user;
-
-      if(!token || !user){
-        throw new Error('Invalid login response');
-      }
-
-      const userNorm = { ...user, _id:user._id || user.id };
-
-      loginUser(userNorm,token);
-
-      toast.success(`Welcome back, ${user.name}!`);
-
-      const path = user.role === 'teacher' ? '/teacher' : '/student';
-
-      navigate(path);
-
-    }catch(err){
-
-      toast.error(err.response?.data?.message || err.message || 'Login failed. Is the backend running?');
-
-    }finally{
-
-      setLoading(false);
-
-    }
-
-  };
-
-
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900 flex items-center justify-center p-4">
 
@@ -140,45 +91,7 @@ export default function Login() {
 
 
 
-          {/* Demo buttons */}
 
-          <div className="flex gap-2 mb-6">
-
-            <button
-              type="button"
-              onClick={()=>handleDemoLogin('student')}
-              disabled={loading}
-              className="flex-1 text-xs py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg border border-blue-200 transition-colors flex items-center justify-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-
-              {loading
-                ? <span className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"/>
-                : <GraduationCap className="w-3 h-3"/>
-              }
-
-              Demo Student
-
-            </button>
-
-
-
-            <button
-              type="button"
-              onClick={()=>handleDemoLogin('teacher')}
-              disabled={loading}
-              className="flex-1 text-xs py-2 px-3 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg border border-purple-200 transition-colors flex items-center justify-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-
-              {loading
-                ? <span className="w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin"/>
-                : <Wifi className="w-3 h-3"/>
-              }
-
-              Demo Teacher
-
-            </button>
-
-          </div>
 
 
 

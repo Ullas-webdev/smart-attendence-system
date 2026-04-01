@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { CheckCircle, BookOpen, AlertTriangle, Bluetooth } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { CheckCircle, BookOpen, AlertTriangle, Bluetooth, Camera, X } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import { AttendanceCircle, EligibilityBadge, StatCard } from '../components/AttendanceStats';
 import { useAuth } from '../context/AuthContext';
@@ -22,9 +22,49 @@ const [activeTab,setActiveTab] = useState('attendance');
 
 const [beaconDevice,setBeaconDevice] = useState(null);
 
+const [showCamera,setShowCamera] = useState(false);
+const [photoData,setPhotoData] = useState(null);
+const [cameraStream,setCameraStream] = useState(null);
+const videoRef = useRef(null);
+const canvasRef = useRef(null);
 
+useEffect(() => {
+  if (showCamera && videoRef.current && cameraStream) {
+    videoRef.current.srcObject = cameraStream;
+  }
+}, [showCamera, cameraStream]);
 
-/* -----------------------------
+const startCamera = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+    setCameraStream(stream);
+    setShowCamera(true);
+    setPhotoData(null);
+  } catch (err) {
+    toast.error("Failed to access camera");
+  }
+};
+
+const stopCamera = () => {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(track => track.stop());
+    setCameraStream(null);
+  }
+  setShowCamera(false);
+};
+
+const capturePhotoAndMark = () => {
+  if (videoRef.current && canvasRef.current) {
+    const context = canvasRef.current.getContext('2d');
+    canvasRef.current.width = videoRef.current.videoWidth;
+    canvasRef.current.height = videoRef.current.videoHeight;
+    context.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+    const dataUrl = canvasRef.current.toDataURL('image/jpeg');
+    setPhotoData(dataUrl);
+    stopCamera();
+    handleMarkAttendance(dataUrl);
+  }
+};/* -----------------------------
    LOAD CLASSES
 ----------------------------- */
 
@@ -97,7 +137,7 @@ setTodayMarked(false);
    MARK ATTENDANCE
 ----------------------------- */
 
-const handleMarkAttendance = async () => {
+const handleMarkAttendance = async (capturedPhoto) => {
 
 if(!selectedClass) return;
 
@@ -137,7 +177,7 @@ return;
 
 /* CALL BACKEND */
 
-await markAttendance({ classId:selectedClass._id });
+await markAttendance({ classId:selectedClass._id, photoData: capturedPhoto });
 
 
 setTodayMarked(true);
@@ -351,12 +391,12 @@ Attendance Marked
 ) : (
 
 <button
-onClick={handleMarkAttendance}
+onClick={startCamera}
 disabled={marking}
-className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold"
+className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center gap-2"
 >
-
-{marking ? 'Scanning classroom beacon...' : 'Mark Attendance'}
+<Camera className="w-5 h-5"/>
+{marking ? 'Processing...' : 'Capture Photo & Mark Attendance'}
 
 </button>
 
@@ -399,6 +439,45 @@ className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold"
 )}
 
 </div>
+
+{/* CAMERA MODAL */}
+{showCamera && (
+  <div className="fixed inset-0 bg-black/80 z-50 flex flex-col items-center justify-center p-4">
+    <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative">
+      <div className="p-4 border-b flex items-center justify-between">
+        <h3 className="font-bold text-gray-900 flex items-center gap-2">
+          <Camera className="w-5 h-5"/>
+          Verify Identity
+        </h3>
+        <button onClick={stopCamera} className="text-gray-500 hover:text-red-500 transition-colors">
+          <X className="w-6 h-6"/>
+        </button>
+      </div>
+      
+      <div className="bg-black relative aspect-square flex items-center justify-center">
+        <video 
+          ref={videoRef} 
+          autoPlay 
+          playsInline 
+          className="w-full h-full object-cover transform -scale-x-100"
+        />
+        <canvas ref={canvasRef} className="hidden" />
+      </div>
+
+      <div className="p-4 bg-gray-50">
+        <button
+          onClick={capturePhotoAndMark}
+          className="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-700 transition-colors text-white font-bold text-lg"
+        >
+          Capture & Submit
+        </button>
+        <p className="text-xs text-center text-gray-500 mt-3">
+          Your photo will be analyzed to prevent attendance fraud.
+        </p>
+      </div>
+    </div>
+  </div>
+)}
 
 </div>
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, CheckCircle, AlertTriangle, BookOpen, Play, Edit3, Bluetooth, Download } from 'lucide-react';
+import { Users, CheckCircle, AlertTriangle, BookOpen, Play, Edit3, Bluetooth, Download, Camera, X } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import { AttendanceCircle, StatCard } from '../components/AttendanceStats';
 import { useAuth } from '../context/AuthContext';
@@ -27,6 +27,7 @@ const [activeDevices,setActiveDevices] = useState([]);
 
 const [loading,setLoading] = useState(false);
 const [overrideModal,setOverrideModal] = useState(null);
+const [photoModal,setPhotoModal] = useState(null);
 
 
 /* LOAD CLASSES */
@@ -94,7 +95,8 @@ student,
 present,
 total,
 percentage,
-todayStatus: todayRecord ? todayRecord.status : 'absent'
+todayStatus: todayRecord ? todayRecord.status : 'absent',
+todayRecord
 };
 
 });
@@ -499,7 +501,7 @@ Loading...
 </td>
 
 <td>
-
+<div className="flex items-center gap-2">
 <button
 type="button"
 onClick={()=>setOverrideModal(s.student)}
@@ -508,6 +510,17 @@ className="text-gray-400 hover:text-blue-600"
 <Edit3 className="w-4 h-4"/>
 </button>
 
+{s.todayRecord?.photo && (
+  <button
+  type="button"
+  onClick={()=>setPhotoModal(s.todayRecord.photo)}
+  className="text-gray-400 hover:text-green-600"
+  title="View Photo"
+  >
+  <Camera className="w-4 h-4"/>
+  </button>
+)}
+</div>
 </td>
 
 </tr>
@@ -529,6 +542,70 @@ className="text-gray-400 hover:text-blue-600"
 )}
 
 </div>
+
+{overrideModal && (
+  <div className="fixed inset-0 bg-black/80 z-50 flex flex-col items-center justify-center p-4">
+    <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative">
+      <div className="p-4 border-b flex items-center justify-between">
+        <h3 className="font-bold text-gray-900">
+          Edit Attendance
+        </h3>
+        <button onClick={()=>setOverrideModal(null)} className="text-gray-500 hover:text-red-500 transition-colors">
+          <X className="w-6 h-6"/>
+        </button>
+      </div>
+      <div className="p-6">
+        <p className="text-sm text-gray-600 mb-6 text-center">
+          Update attendance for <strong>{overrideModal.name}</strong>
+        </p>
+
+        <div className="space-y-3">
+          <button
+            onClick={() => handleManualOverride({ studentId: overrideModal._id, status: 'present' })}
+            className="w-full py-3 rounded-xl bg-green-50 text-green-700 font-bold hover:bg-green-100 transition-all border border-green-200 flex items-center justify-center gap-2"
+          >
+            <CheckCircle className="w-5 h-5"/>
+            Mark Present
+          </button>
+          
+          <button
+            onClick={() => handleManualOverride({ studentId: overrideModal._id, status: 'absent' })}
+            className="w-full py-3 rounded-xl bg-red-50 text-red-700 font-bold hover:bg-red-100 transition-all border border-red-200 flex items-center justify-center gap-2"
+          >
+            <AlertTriangle className="w-5 h-5"/>
+            Mark Absent
+          </button>
+
+          <button
+            onClick={() => setOverrideModal(null)}
+            className="w-full py-3 rounded-xl bg-gray-50 text-gray-700 font-bold hover:bg-gray-100 transition-all border border-gray-200"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{photoModal && (
+  <div className="fixed inset-0 bg-black/80 z-50 flex flex-col items-center justify-center p-4">
+    <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative">
+      <div className="p-4 border-b flex items-center justify-between">
+        <h3 className="font-bold text-gray-900 flex items-center gap-2">
+          <Camera className="w-5 h-5"/>
+          Attendance Photo
+        </h3>
+        <button onClick={()=>setPhotoModal(null)} className="text-gray-500 hover:text-red-500 transition-colors">
+          <X className="w-6 h-6"/>
+        </button>
+      </div>
+      <div className="bg-gray-100 p-4 flex justify-center">
+        <img src={photoModal} alt="Student Attendance" className="rounded-xl w-full h-auto shadow-md" />
+      </div>
+    </div>
+  </div>
+)}
 
 </div>
 

@@ -43,7 +43,11 @@ const attendanceSchema = new mongoose.Schema({
 
   rssiAtMarkTime: Number,
 
-  sessionId: String
+  sessionId: String,
+
+  photo: {
+    type: String
+  }
 
 });
 

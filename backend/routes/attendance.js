@@ -81,7 +81,7 @@ router.post('/mark', protect, authorize('student'), async (req, res) => {
 
   try {
 
-    const { classId } = req.body;
+    const { classId, photoData } = req.body;
     const student = req.user;
 
     const classDoc = await Class.findById(classId);
@@ -151,6 +151,28 @@ router.post('/mark', protect, authorize('student'), async (req, res) => {
       });
     }
 
+    if (!photoData) {
+      return res.status(400).json({
+        success: false,
+        message: 'Photo capture is required'
+      });
+    }
+
+    /* Check duplicate photo */
+    const duplicate = await Attendance.findOne({
+      class: classId,
+      date: { $gte: today },
+      photo: photoData
+    });
+
+    if (duplicate) {
+      await Attendance.findByIdAndDelete(duplicate._id);
+      return res.status(400).json({
+        success: false,
+        message: 'Duplicate photo detected. Previous attendance revoked.'
+      });
+    }
+
     /* Create attendance */
 
     const attendance = await Attendance.create({
@@ -158,7 +180,8 @@ router.post('/mark', protect, authorize('student'), async (req, res) => {
       class: classId,
       date: today,
       status: 'present',
-      markedBy: 'student'
+      markedBy: 'student',
+      photo: photoData
     });
 
     await attendance.populate('student','name rollNumber');
