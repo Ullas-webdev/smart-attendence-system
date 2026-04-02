@@ -53,155 +53,100 @@ const stopCamera = () => {
   setShowCamera(false);
 };
 
-const capturePhotoAndMark = () => {
-  if (videoRef.current && canvasRef.current) {
-    const context = canvasRef.current.getContext('2d');
-    canvasRef.current.width = videoRef.current.videoWidth;
-    canvasRef.current.height = videoRef.current.videoHeight;
-    context.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
-    const dataUrl = canvasRef.current.toDataURL('image/jpeg');
-    setPhotoData(dataUrl);
-    stopCamera();
-    handleMarkAttendance(dataUrl);
+const handleCaptureAndScan = async () => {
+  if (!selectedClass) return;
+  if (!videoRef.current || !canvasRef.current) return;
+
+  // 1. Synchronously capture photo from video feed
+  const context = canvasRef.current.getContext('2d');
+  canvasRef.current.width = videoRef.current.videoWidth;
+  canvasRef.current.height = videoRef.current.videoHeight;
+  context.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+  const capturedPhoto = canvasRef.current.toDataURL('image/jpeg');
+
+  // 2. Immediately request Bluetooth device before ANY React state updates.
+  let beacon = null;
+  try {
+    beacon = await scanForESP32Beacon();
+  } catch (err) {
+    // Explicitly show the mobile error
+    toast.error(err.message || "Bluetooth scan failed");
+    return;
   }
-};/* -----------------------------
-   LOAD CLASSES
------------------------------ */
 
-const loadClasses = async ()=>{
-try{
+  // 3. Now we can safely execute React state updates and network calls safely!
+  setPhotoData(capturedPhoto);
+  stopCamera();
+  setMarking(true);
 
-const res = await getClasses();
+  if (!beacon) {
+    toast.error("Bluetooth pairing cancelled or failed");
+    setMarking(false);
+    return;
+  }
 
-setClasses(res.data.classes);
+  if (beacon.rssi && beacon.rssi < -70) {
+    toast.error("Move closer to classroom beacon");
+    setMarking(false);
+    return;
+  }
 
-if(res.data.classes.length>0 && !selectedClass){
-setSelectedClass(res.data.classes[0]);
-}
+  setBeaconDevice(beacon);
 
-}catch{
-toast.error('Failed to load classes');
-}
+  // 4. Send physical data to backend APIs
+  try {
+    await markAttendance({ classId: selectedClass._id, photoData: capturedPhoto });
+    
+    setTodayMarked(true);
+    await loadStats();
+    
+    toast.success(`Beacon detected: ${beacon.name}`);
+    toast.success("Attendance marked successfully");
+  } catch(err) {
+    toast.error(err.response?.data?.message || "Failed to mark attendance");
+  } finally {
+    setMarking(false);
+  }
 };
 
 
 
 /* -----------------------------
-   LOAD STATS
+   LOAD CLASSES & STATS
 ----------------------------- */
+const loadClasses = async ()=>{
+  try{
+    const res = await getClasses();
+    setClasses(res.data.classes);
+    if(res.data.classes.length>0 && !selectedClass){
+      setSelectedClass(res.data.classes[0]);
+    }
+  }catch{
+    toast.error('Failed to load classes');
+  }
+};
 
 const loadStats = async ()=>{
-
-try{
-
-const res = await getMyStats();
-
-setStats(res.data.stats);
-
-}catch{}
-
+  try{
+    const res = await getMyStats();
+    setStats(res.data.stats);
+  }catch{}
 };
 
-
-
 useEffect(()=>{
-loadClasses();
-loadStats();
+  loadClasses();
+  loadStats();
 },[]);
 
-
-
-/* -----------------------------
-   UPDATE todayMarked
------------------------------ */
-
 useEffect(()=>{
-
-if(!selectedClass) return;
-
-const stat = stats.find(
-s => s.class?.id === selectedClass._id
-);
-
-if(stat?.todayStatus === "present" || stat?.todayStatus === "manual_override"){
-setTodayMarked(true);
-}else{
-setTodayMarked(false);
-}
-
+  if(!selectedClass) return;
+  const stat = stats.find(s => s.class?.id === selectedClass._id);
+  if(stat?.todayStatus === "present" || stat?.todayStatus === "manual_override"){
+    setTodayMarked(true);
+  }else{
+    setTodayMarked(false);
+  }
 },[selectedClass,stats]);
-
-
-
-/* -----------------------------
-   MARK ATTENDANCE
------------------------------ */
-
-const handleMarkAttendance = async (capturedPhoto) => {
-
-if(!selectedClass) return;
-
-setMarking(true);
-
-try{
-
-/* BLE SCAN */
-
-const beacon = await scanForESP32Beacon();
-
-if(!beacon){
-
-toast.error("No Bluetooth device detected");
-
-setMarking(false);
-
-return;
-
-}
-
-setBeaconDevice(beacon);
-
-
-/* RSSI PROXIMITY CHECK */
-
-if(beacon.rssi && beacon.rssi < -70){
-
-toast.error("Move closer to classroom beacon");
-
-setMarking(false);
-
-return;
-
-}
-
-
-/* CALL BACKEND */
-
-await markAttendance({ classId:selectedClass._id, photoData: capturedPhoto });
-
-
-setTodayMarked(true);
-
-await loadStats();
-
-toast.success(`Beacon detected: ${beacon.name}`);
-
-toast.success("Attendance marked successfully");
-
-
-}catch(err){
-
-toast.error(err.response?.data?.message || "Failed to mark attendance");
-
-}finally{
-
-setMarking(false);
-
-}
-
-};
-
-
 
 /* -----------------------------
    STATS
@@ -466,7 +411,7 @@ className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold flex items-ce
 
       <div className="p-4 bg-gray-50">
         <button
-          onClick={capturePhotoAndMark}
+          onClick={handleCaptureAndScan}
           className="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-700 transition-colors text-white font-bold text-lg"
         >
           Capture & Submit

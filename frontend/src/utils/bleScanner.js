@@ -17,10 +17,8 @@ export async function scanForESP32Beacon() {
     };
 
   } catch (error) {
-
-    console.log("Scan cancelled");
-    return null;
-
+    console.error("BLE Scan Error:", error);
+    throw error;
   }
 
 }
