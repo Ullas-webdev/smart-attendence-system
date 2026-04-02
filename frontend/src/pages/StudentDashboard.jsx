@@ -57,33 +57,33 @@ const handleCaptureAndScan = async () => {
   if (!selectedClass) return;
   if (!videoRef.current || !canvasRef.current) return;
 
-  // 1. Synchronously capture photo from video feed
+  // 1. Immediately request Bluetooth device before ANY other operation.
+  // Mobile browsers strictly require the native request to be the absolute first 
+  // action in the call stack of a user-gesture click event.
+  let beacon = null;
+  try {
+    beacon = await scanForESP32Beacon();
+  } catch (err) {
+    toast.error(err.message || "Bluetooth scan failed");
+    return;
+  }
+
+  if (!beacon) {
+    toast.error("Bluetooth pairing cancelled or failed");
+    return;
+  }
+
+  // 2. Synchronously capture photo from video feed now that gesture-lock is satisfied
   const context = canvasRef.current.getContext('2d');
   canvasRef.current.width = videoRef.current.videoWidth;
   canvasRef.current.height = videoRef.current.videoHeight;
   context.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
   const capturedPhoto = canvasRef.current.toDataURL('image/jpeg');
-
-  // 2. Immediately request Bluetooth device before ANY React state updates.
-  let beacon = null;
-  try {
-    beacon = await scanForESP32Beacon();
-  } catch (err) {
-    // Explicitly show the mobile error
-    toast.error(err.message || "Bluetooth scan failed");
-    return;
-  }
-
-  // 3. Now we can safely execute React state updates and network calls safely!
   setPhotoData(capturedPhoto);
+
+  // 3. Close camera and update UI state
   stopCamera();
   setMarking(true);
-
-  if (!beacon) {
-    toast.error("Bluetooth pairing cancelled or failed");
-    setMarking(false);
-    return;
-  }
 
   if (beacon.rssi && beacon.rssi < -70) {
     toast.error("Move closer to classroom beacon");
